@@ -1,0 +1,23 @@
+[project]
+name = "omai"
+version = "0.2.0"
+description = "OMAI - a private, single-user personal AI agent (chat, long-term memory, free web research, permission gate, audit log)"
+requires-python = ">=3.10"
+dependencies = ["openai>=1.50", "ddgs>=9.0", "google-auth-oauthlib>=1.2", "google-api-python-client>=2.140"]
+
+[project.optional-dependencies]
+anthropic = ["anthropic>=0.60"]
+dev = ["pytest", "anthropic>=0.60"]
+
+[project.scripts]
+omai = "omai.cli:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["omai"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
