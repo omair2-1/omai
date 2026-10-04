@@ -88,3 +88,4 @@ def make_agent(config, tmp_path):
         return agent, client, memory, audit, confirms
 
     return _make
+
