@@ -62,6 +62,19 @@ PRESETS: dict[str, Preset] = {
 }
 
 
+# Fallback chain only supports these OpenAI-compatible, free providers (same message format,
+# so switching mid-conversation is safe). Anthropic and custom "openai" servers are excluded.
+_FALLBACK_ELIGIBLE = {"gemini", "groq", "openrouter", "ollama"}
+
+
+@dataclass(frozen=True)
+class ResolvedProvider:
+    name: str
+    api_key: str
+    model: str
+    base_url: str
+
+
 @dataclass(frozen=True)
 class Config:
     api_key: str | None
@@ -80,6 +93,11 @@ class Config:
     telegram_user_id: int | None = None
     github_token: str | None = None
     youtube_api_key: str | None = None
+    fallback_provider_names: tuple[str, ...] = ()
+    whatsapp_token: str | None = None
+    whatsapp_phone_number_id: str | None = None
+    spotify_client_id: str | None = None
+    spotify_client_secret: str | None = None
 
     @classmethod
     def load(cls, env_file: str = ".env") -> "Config":
@@ -115,6 +133,15 @@ class Config:
             ),
             github_token=os.environ.get("GITHUB_TOKEN") or None,
             youtube_api_key=os.environ.get("YOUTUBE_API_KEY") or None,
+            fallback_provider_names=tuple(
+                p.strip().lower()
+                for p in os.environ.get("OMAI_FALLBACK_PROVIDERS", "").split(",")
+                if p.strip()
+            ),
+            whatsapp_token=os.environ.get("WHATSAPP_TOKEN") or None,
+            whatsapp_phone_number_id=os.environ.get("WHATSAPP_PHONE_NUMBER_ID") or None,
+            spotify_client_id=os.environ.get("SPOTIFY_CLIENT_ID") or None,
+            spotify_client_secret=os.environ.get("SPOTIFY_CLIENT_SECRET") or None,
         )
 
     @property
@@ -132,6 +159,46 @@ class Config:
     @property
     def youtube_configured(self) -> bool:
         return bool(self.youtube_api_key)
+
+    @property
+    def whatsapp_configured(self) -> bool:
+        return bool(self.whatsapp_token and self.whatsapp_phone_number_id)
+
+    @property
+    def spotify_configured(self) -> bool:
+        return bool(self.spotify_client_id and self.spotify_client_secret)
+
+    def resolve_provider(self, name: str) -> "ResolvedProvider | None":
+        """Resolve a provider name to (api_key, model, base_url) using its own env vars.
+
+        Returns None if the name isn't fallback-eligible, or it has no api key / model available -
+        callers should silently skip those rather than error, since fallback is best-effort.
+        """
+        name = name.lower()
+        if name not in _FALLBACK_ELIGIBLE:
+            return None
+        preset = PRESETS[name]
+        api_key = (os.environ.get(preset.key_env) if preset.key_env else "not-needed") or None
+        if not api_key:
+            return None
+        model = os.environ.get(f"OMAI_MODEL_{name.upper()}") or preset.model
+        if not model:
+            return None
+        return ResolvedProvider(name=name, api_key=api_key, model=model, base_url=preset.base_url)
+
+    @property
+    def fallback_chain(self) -> list["ResolvedProvider"]:
+        """Resolved, de-duplicated fallback providers (excluding the primary), in configured order."""
+        seen = {self.provider}
+        chain: list[ResolvedProvider] = []
+        for name in self.fallback_provider_names:
+            if name in seen:
+                continue
+            seen.add(name)
+            resolved = self.resolve_provider(name)
+            if resolved is not None:
+                chain.append(resolved)
+        return chain
 
     def telegram_problem(self) -> str | None:
         if not self.telegram_token:

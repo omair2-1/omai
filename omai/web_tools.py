@@ -137,8 +137,9 @@ def make_web_tools(
         Tool(
             name="web_search",
             description=(
-                "Search the web (DuckDuckGo). Returns titles, URLs and snippets. Use for anything current "
-                "or that you are unsure about; try 2-3 different queries for important questions."
+                "Search the web (DuckDuckGo). Returns titles, URLs and snippets ONLY - snippets are too thin "
+                "to quote as fact. Use for anything current or that you are unsure about; try 2-3 different "
+                "queries for important questions, then use fetch_page on the specific results worth citing."
             ),
             input_schema={
                 "type": "object",

@@ -35,15 +35,31 @@ def cli_confirm(summary: str) -> bool:
 
 
 def build_backend(config: Config) -> LLMBackend:
-    """Create the LLM backend for the configured provider (SDKs are imported lazily)."""
+    """Create the LLM backend for the configured provider (SDKs are imported lazily).
+
+    For OpenAI-compatible providers, if OMAI_FALLBACK_PROVIDERS names other configured free
+    providers, wraps them all in a FallbackOpenAIBackend so a rate-limited provider automatically
+    hands off to the next one. Anthropic is never part of a fallback chain (different message format).
+    """
     if config.provider == "anthropic":
         import anthropic
 
         return AnthropicBackend(anthropic.Anthropic(api_key=config.api_key), config)
+
     import openai
 
-    client = openai.OpenAI(api_key=config.api_key, base_url=config.base_url)
-    return OpenAICompatBackend(client, config.model)
+    from .llm import FallbackOpenAIBackend
+
+    primary = OpenAICompatBackend(openai.OpenAI(api_key=config.api_key, base_url=config.base_url), config.model)
+    chain = config.fallback_chain
+    if not chain:
+        return primary
+
+    backends: list[tuple[str, OpenAICompatBackend]] = [(config.provider, primary)]
+    for rp in chain:
+        client = openai.OpenAI(api_key=rp.api_key, base_url=rp.base_url)
+        backends.append((rp.name, OpenAICompatBackend(client, rp.model)))
+    return FallbackOpenAIBackend(backends)
 
 
 def build_agent(config: Config, backend: LLMBackend, confirm_fn=cli_confirm):
@@ -81,6 +97,16 @@ def build_agent(config: Config, backend: LLMBackend, confirm_fn=cli_confirm):
         from .youtube_tools import make_youtube_tools
 
         for tool in make_youtube_tools(config.youtube_api_key):
+            registry.register(tool)
+    if config.whatsapp_configured:
+        from .whatsapp_tools import make_whatsapp_tools
+
+        for tool in make_whatsapp_tools(config.whatsapp_token, config.whatsapp_phone_number_id):
+            registry.register(tool)
+    if config.spotify_configured:
+        from .spotify_tools import make_spotify_tools
+
+        for tool in make_spotify_tools(config.spotify_client_id, config.spotify_client_secret):
             registry.register(tool)
     permissions = PermissionManager(confirm_fn, audit)
     agent = Agent(backend, config, registry, memory, permissions, audit)
@@ -177,10 +203,15 @@ def main(argv: list[str] | None = None) -> int:
     gmail = "on" if config.gmail_configured else "off"
     github = "on" if config.github_configured else "off"
     youtube = "on" if config.youtube_configured else "off"
+    whatsapp = "on" if config.whatsapp_configured else "off"
+    spotify = "on" if config.spotify_configured else "off"
+    from .llm import FallbackOpenAIBackend
+
+    fallback = f", fallback: {[n for n, _ in backend._backends]}" if isinstance(backend, FallbackOpenAIBackend) else ""
     print(
-        f"OMAI ready  (provider: {config.provider}, model: {config.model}, web search: {web}, "
-        f"gmail: {gmail}, github: {github}, youtube: {youtube}, memories: {memory.count()}).  "
-        f"/help for commands."
+        f"OMAI ready  (provider: {config.provider}, model: {config.model}, web search: {web}{fallback}, "
+        f"gmail: {gmail}, github: {github}, youtube: {youtube}, whatsapp: {whatsapp}, "
+        f"spotify: {spotify}, memories: {memory.count()}).  /help for commands."
     )
     while True:
         try:

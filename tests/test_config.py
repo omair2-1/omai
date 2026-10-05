@@ -112,3 +112,74 @@ def test_github_youtube_configured_flags(monkeypatch, tmp_path):
     monkeypatch.setenv("YOUTUBE_API_KEY", "yt_x")
     c2 = Config.load(str(tmp_path / "none.env"))
     assert c2.github_configured is True and c2.youtube_configured is True
+
+
+def test_whatsapp_configured_flag(monkeypatch, tmp_path):
+    _clean(monkeypatch)
+    monkeypatch.setenv("GEMINI_API_KEY", "k")
+    for v in ("WHATSAPP_TOKEN", "WHATSAPP_PHONE_NUMBER_ID"):
+        monkeypatch.delenv(v, raising=False)
+    c = Config.load(str(tmp_path / "none.env"))
+    assert c.whatsapp_configured is False
+
+    monkeypatch.setenv("WHATSAPP_TOKEN", "t")
+    monkeypatch.setenv("WHATSAPP_PHONE_NUMBER_ID", "123")
+    c2 = Config.load(str(tmp_path / "none.env"))
+    assert c2.whatsapp_configured is True
+
+
+def test_fallback_chain_resolves_configured_free_providers(monkeypatch, tmp_path):
+    _clean(monkeypatch)
+    monkeypatch.setenv("GEMINI_API_KEY", "gk")
+    monkeypatch.setenv("OMAI_FALLBACK_PROVIDERS", "groq,ollama")
+    monkeypatch.setenv("GROQ_API_KEY", "grk")
+    # ollama needs no key, so it resolves even without one
+    c = Config.load(str(tmp_path / "none.env"))
+    names = [p.name for p in c.fallback_chain]
+    assert names == ["groq", "ollama"]
+
+
+def test_fallback_chain_skips_unconfigured_and_primary_and_duplicates(monkeypatch, tmp_path):
+    _clean(monkeypatch)
+    monkeypatch.setenv("GEMINI_API_KEY", "gk")
+    monkeypatch.setenv("OMAI_FALLBACK_PROVIDERS", "gemini,openrouter,groq,groq")
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)  # not configured -> skipped
+    monkeypatch.delenv("GROQ_API_KEY", raising=False)  # not configured -> skipped
+    c = Config.load(str(tmp_path / "none.env"))
+    assert c.fallback_chain == []  # gemini is primary (skipped), others unconfigured
+
+
+def test_fallback_model_override_env():
+    from omai.config import PRESETS, Config
+
+    import os
+    os.environ["GROQ_API_KEY"] = "grk"
+    os.environ["OMAI_MODEL_GROQ"] = "custom-groq-model"
+    try:
+        c = Config(api_key="x", model="m", data_dir=tmp_path_dummy(), web_search=True,
+                   web_search_max_uses=5, max_history_turns=20, max_tool_rounds=12, max_tokens=4096,
+                   provider="gemini")
+        resolved = c.resolve_provider("groq")
+        assert resolved is not None and resolved.model == "custom-groq-model"
+    finally:
+        del os.environ["GROQ_API_KEY"]
+        del os.environ["OMAI_MODEL_GROQ"]
+
+
+def tmp_path_dummy():
+    from pathlib import Path
+    return Path("/tmp")
+
+
+def test_spotify_configured_flag(monkeypatch, tmp_path):
+    _clean(monkeypatch)
+    monkeypatch.setenv("GEMINI_API_KEY", "k")
+    for v in ("SPOTIFY_CLIENT_ID", "SPOTIFY_CLIENT_SECRET"):
+        monkeypatch.delenv(v, raising=False)
+    c = Config.load(str(tmp_path / "none.env"))
+    assert c.spotify_configured is False
+
+    monkeypatch.setenv("SPOTIFY_CLIENT_ID", "cid")
+    monkeypatch.setenv("SPOTIFY_CLIENT_SECRET", "csecret")
+    c2 = Config.load(str(tmp_path / "none.env"))
+    assert c2.spotify_configured is True

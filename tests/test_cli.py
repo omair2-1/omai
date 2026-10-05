@@ -126,3 +126,62 @@ def test_build_agent_registers_github_and_youtube_only_when_configured(config):
     names = agent2.registry.names()
     assert {"github_list_repos", "github_list_issues", "github_list_commits", "github_create_issue"} <= set(names)
     assert {"youtube_search", "youtube_video_info"} <= set(names)
+
+
+def test_build_agent_registers_whatsapp_only_when_configured(config):
+    from dataclasses import replace
+    from omai.llm import AnthropicBackend
+
+    agent, *_ = cli.build_agent(config, AnthropicBackend(FakeClient([]), config))
+    assert "whatsapp_send" not in agent.registry.names()
+
+    cfg2 = replace(config, whatsapp_token="t", whatsapp_phone_number_id="123")
+    agent2, *_ = cli.build_agent(cfg2, AnthropicBackend(FakeClient([]), cfg2))
+    assert "whatsapp_send" in agent2.registry.names()
+
+
+def test_build_backend_wraps_fallback_when_configured(monkeypatch, tmp_path):
+    monkeypatch.setenv("GEMINI_API_KEY", "gk")
+    monkeypatch.setenv("OMAI_PROVIDER", "gemini")
+    monkeypatch.setenv("OMAI_FALLBACK_PROVIDERS", "groq")
+    monkeypatch.setenv("GROQ_API_KEY", "grk")
+    monkeypatch.chdir(tmp_path)
+    from omai.config import Config
+    from omai.llm import FallbackOpenAIBackend, OpenAICompatBackend
+
+    cfg = Config.load()
+    backend = cli.build_backend(cfg)
+    assert isinstance(backend, FallbackOpenAIBackend)
+    names = [n for n, _ in backend._backends]
+    assert names == ["gemini", "groq"]
+
+    for v in ("OMAI_PROVIDER", "GEMINI_API_KEY", "OMAI_FALLBACK_PROVIDERS", "GROQ_API_KEY"):
+        monkeypatch.delenv(v, raising=False)
+
+
+def test_build_backend_no_fallback_configured_returns_plain_backend(monkeypatch, tmp_path):
+    monkeypatch.setenv("GEMINI_API_KEY", "gk")
+    monkeypatch.setenv("OMAI_PROVIDER", "gemini")
+    monkeypatch.delenv("OMAI_FALLBACK_PROVIDERS", raising=False)
+    monkeypatch.chdir(tmp_path)
+    from omai.config import Config
+    from omai.llm import FallbackOpenAIBackend, OpenAICompatBackend
+
+    cfg = Config.load()
+    backend = cli.build_backend(cfg)
+    assert isinstance(backend, OpenAICompatBackend) and not isinstance(backend, FallbackOpenAIBackend)
+
+    for v in ("OMAI_PROVIDER", "GEMINI_API_KEY"):
+        monkeypatch.delenv(v, raising=False)
+
+
+def test_build_agent_registers_spotify_only_when_configured(config):
+    from dataclasses import replace
+    from omai.llm import AnthropicBackend
+
+    agent, *_ = cli.build_agent(config, AnthropicBackend(FakeClient([]), config))
+    assert "spotify_search" not in agent.registry.names()
+
+    cfg2 = replace(config, spotify_client_id="cid", spotify_client_secret="csecret")
+    agent2, *_ = cli.build_agent(cfg2, AnthropicBackend(FakeClient([]), cfg2))
+    assert "spotify_search" in agent2.registry.names()

@@ -109,6 +109,77 @@ titled 'X' describing Y."* (that last one needs your approval, like `forget` doe
 
 Try: *"Find YouTube videos about <topic>."* / *"Summarize this video: <link>."*
 
+## Automatic fallback between free providers (optional)
+
+If your primary provider (e.g. Gemini) hits its daily rate limit, OMAI can automatically try
+another configured free provider instead of just erroring out.
+
+In `.env`:
+```
+OMAI_FALLBACK_PROVIDERS=groq,ollama
+GROQ_API_KEY=...
+```
+Only `gemini`, `groq`, `openrouter`, and `ollama` can be chained this way (they speak the same
+API format, so switching mid-conversation is safe). It remembers whichever provider last worked
+and tries that one first, so a dead provider isn't re-checked on every single message. The
+startup line shows the chain, e.g. `fallback: ['gemini', 'groq']`.
+
+Grok and OpenAI are deliberately not offered as presets: as of writing, neither has an ongoing
+free API tier anymore (both now give only a one-time trial credit that runs out), which would
+break "free to run" once it's spent.
+
+## WhatsApp (optional, free)
+
+Meta gives every WhatsApp Business app a free test number you can message from, plus up to
+5 phone numbers you can allowlist to receive messages (e.g. your own contacts) - no business
+verification needed for this.
+
+1. Go to developers.facebook.com -> **My Apps -> Create App -> Business** type.
+2. In the app, **Add Product -> WhatsApp**.
+3. On the **API Setup** page, note the **Phone number ID** and the **temporary access token** shown.
+4. Under the "To" field, click **Manage phone number list -> Add phone number**. Enter the number
+   you want to message (e.g. your mom's, with country code) - she'll get a verification code to confirm.
+5. In `.env`:
+   ```
+   WHATSAPP_TOKEN=the-temporary-token
+   WHATSAPP_PHONE_NUMBER_ID=the-phone-number-id
+   ```
+
+Try: *"Send a WhatsApp message to +91... saying I'll be home by 8."* - this needs your approval,
+like every other sending action.
+
+**The catch:** that temporary token expires after 24 hours, so you'll need to copy a fresh one
+from the same API Setup page periodically. A permanent token is possible via a Meta "System User"
+but involves more setup - ask if you want to go further down that road. Messages only reach
+numbers you've explicitly allowlisted (max 5) - sending to anyone else will fail with a clear error.
+
+## Spotify (optional, free - search only)
+
+Spotify's playback-control API (play/pause/skip) requires a Premium subscription; without it,
+OMAI can search and hand you a link instead of starting playback itself.
+
+1. Go to developer.spotify.com/dashboard -> **Create app**.
+2. Name/description: anything. Redirect URI: `http://localhost` (required field, unused here).
+3. Tick that you agree to the terms, **Save**.
+4. Open the app -> **Settings** -> copy the **Client ID** and **Client Secret**.
+5. In `.env`:
+   ```
+   SPOTIFY_CLIENT_ID=...
+   SPOTIFY_CLIENT_SECRET=...
+   ```
+
+Try: *"Find the song Blinding Lights."* - it replies with a link you tap to actually play it.
+
+## Zomato / recurring orders (no integration needed - just use memory)
+
+Zomato has no public ordering API for individual developers, and there is no free, legitimate way
+for OMAI to place an order or tap through the app for you - any approach that did that would mean
+automating button-presses on your phone, which is fragile and against most apps' terms of service.
+
+What *does* work, with nothing new to set up: tell OMAI your usual order and it remembers it.
+*"Remember that my usual Zomato order is a chicken biryani from <restaurant>."* Later, *"What's my
+usual order?"* gets it back instantly so you can place it yourself in a couple of taps.
+
 ## Design
 
 | Piece | File | Notes |
@@ -124,6 +195,9 @@ Try: *"Find YouTube videos about <topic>."* / *"Summarize this video: <link>."*
 | Telegram bridge | `omai/telegram_bot.py` | Long-polling, no server needed; owner-only allowlist; permission confirms round-trip through chat |
 | GitHub | `omai/github_tools.py` | Personal access token; list repos/issues/commits (read), create issue (`CONFIRM`) |
 | YouTube | `omai/youtube_tools.py` | API key; search videos, get video info (read-only) |
+| Provider fallback | `omai/llm.py` (`FallbackOpenAIBackend`) | Auto-switches to the next free provider on a rate-limit/overload error |
+| WhatsApp | `omai/whatsapp_tools.py` | Meta test number; send text to allowlisted contacts (`CONFIRM`) |
+| Spotify | `omai/spotify_tools.py` | Client Credentials flow (no login); search only, since playback needs Premium |
 
 Data lives in `~/.omai/` (dir `0700`, files `0600`): `memory.db`, `audit.db`.
 
@@ -153,7 +227,9 @@ Data lives in `~/.omai/` (dir `0700`, files `0600`): `memory.db`, `audit.db`.
 - [ ] Phase 3 — Gmail send/draft (`CONFIRM`)
 - [x] Phase 8 — GitHub (read + create issue, free, personal access token)
 - [x] Phase 7 (read half) — YouTube search/video info (free, API key)
-- [ ] Phases 5–6, 9–12 — WhatsApp/Instagram (need a Meta Business setup), X (no free tier anymore), Reddit/Spotify (free, need OAuth like Gmail), voice, browser/files, remote deployment
+- [x] Phase 5 (partial) — WhatsApp send via Meta's free test number (`CONFIRM`)
+- [x] Phase 7 (search half) — Spotify search (free, no Premium needed; playback control needs Premium)
+- [ ] Phase 5/6 — Instagram (needs a Meta Business setup), X (no free tier anymore), Reddit/Spotify (free, need OAuth like Gmail), voice, browser/files, remote deployment
 
 ## Adding a tool
 

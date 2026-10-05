@@ -191,3 +191,61 @@ class AnthropicBackend(LLMBackend):
                 b["is_error"] = True
             blocks.append(b)
         return [{"role": "user", "content": blocks}]
+
+
+# --------------------------------------------------------------------------- fallback chain
+def _is_retryable(exc: Exception) -> bool:
+    """True for rate-limit / server-overload style errors worth trying the next provider for.
+
+    Checked by status_code (not isinstance of a specific SDK exception class) so this also works
+    with any OpenAI-compatible server and with plain exceptions carrying a status_code attribute.
+    """
+    status = getattr(exc, "status_code", None)
+    if status in {429, 500, 502, 503, 529}:
+        return True
+    name = type(exc).__name__
+    return name in {"RateLimitError", "APIConnectionError", "APITimeoutError", "InternalServerError"}
+
+
+class FallbackOpenAIBackend(LLMBackend):
+    """Tries each OpenAI-compatible backend in order; on a rate-limit/overload error, tries the
+    next. Remembers which one last worked and tries that one first next time, so a healthy
+    provider isn't re-probed through a dead one on every single turn.
+
+    All wrapped backends must be OpenAICompatBackend (or share its message format) since history
+    is shared across them within one conversation - this is NOT safe to mix with AnthropicBackend.
+    """
+
+    builtin_web_search = False
+
+    def __init__(self, backends: list[tuple[str, OpenAICompatBackend]]):
+        if not backends:
+            raise ValueError("FallbackOpenAIBackend needs at least one backend.")
+        self._backends = backends
+        self._active = 0
+        self.last_used: str = backends[0][0]
+
+    def user_message(self, text: str) -> dict:
+        return self._backends[0][1].user_message(text)
+
+    def tool_result_messages(self, results):
+        return self._backends[0][1].tool_result_messages(results)
+
+    def generate(self, system, history, tools, max_tokens) -> LLMResponse:
+        last_exc: Exception | None = None
+        n = len(self._backends)
+        for offset in range(n):
+            idx = (self._active + offset) % n
+            name, backend = self._backends[idx]
+            try:
+                resp = backend.generate(system, history, tools, max_tokens)
+            except Exception as exc:
+                if _is_retryable(exc):
+                    last_exc = exc
+                    continue
+                raise  # a non-retryable error (bad auth, bad request, ...) surfaces immediately
+            self._active = idx
+            self.last_used = name
+            return resp
+        assert last_exc is not None
+        raise last_exc
